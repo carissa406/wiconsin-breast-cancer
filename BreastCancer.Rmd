@@ -1,0 +1,149 @@
+---
+title: "Diagnosing Breast Cancer With K-Nearest Neighbors"
+author: "Carissa Hicks"
+date: '2022-07-03'
+output: html_document
+---
+
+### Introduction
+
+The purpose of this analysis is to use a KNN model to predict the diagnosis of breast cancer (benign or malignant) given specific features. The dataset was obtained from https://archive.ics.uci.edu/ml/datasets/Breast+Cancer+Wisconsin+%28Diagnostic%29
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+bc = read.csv("wisc_bc_data.csv")
+```
+
+loaded libraries
+```{r libraries}
+library(ggplot2)
+library(class)
+library(gmodels)
+library(caret)
+```
+
+### Data Exploration and Preprocessing
+
+```{r bc}
+str(bc)
+```
+The `id` variable is not relevant for analysis using KNN so we will remove it from the data frame.
+```{r}
+bc = bc[-1]
+```
+
+We will also convert our target variable `diagnosis` to a factor with two variables. "Benign" and "Malignant".
+```{r}
+bc$diagnosis = factor(bc$diagnosis, levels = c("B", "M"), labels = c("Benign", "Malignant"))
+```
+```{r, echo=FALSE}
+ggplot(bc, aes(diagnosis, fill=diagnosis))+geom_bar()+theme(legend.position = "none")
+```
+
+The the numeric features must be normalized using min-max normalization since they are on different scales.
+```{r, echo=FALSE}
+summary(bc[-1])
+```
+Defined the normalize function
+```{r}
+normalize = function(x){
+  return ((x-min(x)) / max(x)-min(x))
+}
+```
+Applying the normalize function to each numerical feature
+```{r}
+bc_n = as.data.frame(lapply(bc[2:31], normalize))
+```
+
+### Data Analysis and Experimental Results
+
+We will split the data into training and testing sets. First we will randomly shuffle the data to ensure that there will be no discrepancies in the results.
+```{r}
+set.seed(123)
+bc = bc[sample(nrow(bc), replace=FALSE),]
+```
+```{r}
+bc_train = bc_n[1:469, ]
+bc_test = bc_n[470:569, ]
+
+bc_train_labels = bc[1:469, 1]
+bc_test_labels = bc[470:569, 1]
+```
+
+Running the KNN function on our data, k=21
+```{r}
+bc_test_pred = knn(train = bc_train, test = bc_test, cl = bc_train_labels, k=21)
+```
+```{r}
+CrossTable(x=bc_test_labels, y=bc_test_pred, prop.chisq=FALSE)
+```
+
+* 5 false positives(predicted malignant, but was benign)
+* 28 false negatives (predicted benign, but was malignant)
+* 33% error rate
+* 67% correctly classified
+
+Using 10-fold cross validation instead of train/test split
+```{r}
+folds = createFolds(bc$diagnosis, k=10)
+```
+`knn_fold` function takes a fold and returns the validation error for that fold
+```{r}
+knn_fold=function(features,target,fold,k){
+train=features[-fold,]
+validation=features[fold,]
+train_labels=target[-fold]
+validation_labels=target[fold]
+validation_preds=knn(train,validation,train_labels,k=k)
+t= table(validation_labels,validation_preds)
+error=(t[1,2]+t[2,1])/(t[1,1]+t[1,2]+t[2,1]+t[2,2])
+return(error)
+}
+```
+`crossValidationError` function creates the folds and applies the `knn_fold` function to each fold and returns the average of the validation error over all the folds.
+```{r}
+crossValidationError=function(features,target,k){
+folds=createFolds(target,k=10)
+errors=sapply(folds,knn_fold,features=features,
+target=target,k=k)
+return(mean(errors))
+}
+```
+Using the function on our data
+```{r}
+crossValidationError(bc_n, bc[,1],21)
+```
+Tuning K in KNN using a range of values for k
+```{r}
+ks=c(1,5,10,15,20,25,30,35,40,45,50)
+errors = sapply(ks, crossValidationError, features=bc_n, target=bc[,1])
+plot(errors~ks, main="Cross Validation Error vs K", xlab="k", ylab="CVError")
+lines(errors~ks)
+```
+
+* 35 gives us the best cross validation error (37%)
+
+```{r}
+errors
+```
+Using z-score normalization instead of min-max normalization then getting the cross validation score.
+```{r}
+bc_z = as.data.frame(scale(bc[-1]))
+crossValidationError(bc_z, bc[,1],21)
+```
+* z-score normalization did not improve the cross validation error for k=21
+
+```{r}
+errors=sapply(ks, crossValidationError, features=bc_z, target=bc[,1])
+plot(errors~ks, main="Cross Validation Error Vs K After z-score Normalization", xlab="k", ylab="CVError")
+lines(errors~ks)
+```
+
+* k=10 gives us the best cross validation error (30%)
+```{r}
+errors
+```
+
+### Conclusion
+
+The best model was produced using z-score normalization and 10-fold cross validation with 21-nearest neighbors.
